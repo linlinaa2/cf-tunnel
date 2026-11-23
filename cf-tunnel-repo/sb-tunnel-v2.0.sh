@@ -3469,7 +3469,34 @@ _tunnel_start() {
     return 0
 }
 
+# ── 并发保护：guard(每2分钟) 与 poll(每分钟) 可能同一秒触发 ──
+# 纯 POSIX mkdir 原子锁（不依赖 flock，macOS/精简系统也可用）
+# 抢不到锁直接跳过，避免两个 rotate 同时起隧道、互相覆盖 host/pid
 _tunnel_rotate() {
+    local lockdir rc op
+    lockdir="$TUNNEL_DIR/rotate.lock.d"
+    mkdir -p "$TUNNEL_DIR" 2>/dev/null
+    if ! mkdir "$lockdir" 2>/dev/null; then
+        op=$(cat "$lockdir/pid" 2>/dev/null)
+        if [ -n "$op" ] && kill -0 "$op" 2>/dev/null; then
+            echo "[信息] 另一轮换正在进行（pid $op），跳过本次" >&2
+            return 0
+        fi
+        # 锁持有者已死，回收
+        rm -rf "$lockdir" 2>/dev/null
+        if ! mkdir "$lockdir" 2>/dev/null; then
+            echo "[信息] 另一轮换正在进行，跳过本次" >&2
+            return 0
+        fi
+    fi
+    echo $$ > "$lockdir/pid" 2>/dev/null
+    _tunnel_rotate_body "$@"
+    rc=$?
+    rm -rf "$lockdir" 2>/dev/null
+    return $rc
+}
+
+_tunnel_rotate_body() {
     local oldhost oldpid newhost port
     oldhost=$(_tunnel_cur_host)
     oldpid=$(_tunnel_pid)
@@ -3636,7 +3663,7 @@ _tunnel_cron_on() {
     else
         systemctl restart cron >/dev/null 2>&1 || systemctl restart crond >/dev/null 2>&1
     fi
-    _success "已写入 cron：每 15 分钟自动检查"
+    _success "已写入 cron：每分钟取网页指令 + 每 2 分钟进程守护（无 15 分钟自动换）"
 }
 
 _tunnel_cron_off() {
