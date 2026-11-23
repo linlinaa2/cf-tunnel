@@ -3142,13 +3142,20 @@ TUNNEL_DEF_API="https://sub-gen.shenllinya.workers.dev"
 TUNNEL_DEF_TOKEN="__REPORT_TOKEN__"
 
 _tunnel_load_conf() {
-    TUNNEL_API=""; TUNNEL_TOKEN=""; TUNNEL_MAXAGE="259200"
+    TUNNEL_API=""; TUNNEL_TOKEN=""; TUNNEL_MAXAGE="259200"; TUNNEL_CLIENT_TOKEN=""
     if [ -f "$TUNNEL_CONF" ]; then
         . "$TUNNEL_CONF" 2>/dev/null
         TUNNEL_API="${API_BASE:-}"
         TUNNEL_TOKEN="${REPORT_TOKEN:-}"
+        TUNNEL_CLIENT_TOKEN="${CLIENT_TOKEN:-}"
         [ -n "${MAX_AGE:-}" ] && TUNNEL_MAXAGE="$MAX_AGE"
     fi
+}
+
+# 用于 /traffic 的 secret：优先独立的 CLIENT_TOKEN，否则复用 REPORT_TOKEN
+_tunnel_client_secret() {
+    _tunnel_load_conf
+    if [ -n "$TUNNEL_CLIENT_TOKEN" ]; then echo "$TUNNEL_CLIENT_TOKEN"; else echo "$TUNNEL_TOKEN"; fi
 }
 
 _tunnel_cur_host() { [ -f "$TUNNEL_DIR/host" ] && tr -d '\n' < "$TUNNEL_DIR/host" 2>/dev/null; return 0; }
@@ -3166,13 +3173,45 @@ _tunnel_age() {
 }
 
 _tunnel_backend_port() {
-    local cfg port=""
-    for cfg in /usr/local/etc/sing-box/config.json /etc/sing-box/config.json /opt/sing-box/config.json; do
-        [ -f "$cfg" ] || continue
-        port=$(grep -o '"listen_port"[[:space:]]*:[[:space:]]*[0-9]*' "$cfg" 2>/dev/null | head -1 | grep -o '[0-9]*$')
+    local port=""
+    # 1) 配置文件里记住的端口优先
+    if [ -f "$TUNNEL_CONF" ]; then
+        port=$(. "$TUNNEL_CONF" 2>/dev/null; echo "${BACKEND_PORT:-}")
         [ -n "$port" ] && { echo "$port"; return 0; }
+    fi
+    # 2) 自动探测：找监听中的、能响应 HTTP 的本地端口
+    for port in 8080 2080 8081 8443 3000 8000; do
+        if (echo >/dev/tcp/127.0.0.1/$port) 2>/dev/null; then
+            echo "$port"; return 0
+        fi
     done
     echo "8080"
+}
+
+_tunnel_pick_port() {
+    local saved=""
+    [ -f "$TUNNEL_CONF" ] && saved=$(. "$TUNNEL_CONF" 2>/dev/null; echo "${BACKEND_PORT:-}")
+    local d=""
+    for d in 8080 3000 8000 2080; do
+        (echo >/dev/tcp/127.0.0.1/$d) 2>/dev/null && break
+    done
+    echo ""
+    echo "  当前监听中的常见后端端口："
+    for d in 8080 2080 8081 3000 8000 43732; do
+        (echo >/dev/tcp/127.0.0.1/$d) 2>/dev/null && echo "    $d  (在监听)"
+    done
+    echo ""
+    echo "  已保存的后端端口：${saved:-（无）}"
+    echo "  后端端口（回车用 ${saved:-8080}）："
+    local p; read -r p || exit 0
+    [ -z "$p" ] && p="${saved:-8080}"
+    case "$p" in
+        ''|*[!0-9]*) _error "端口必须是数字"; return 1 ;;
+    esac
+    if ! (echo >/dev/tcp/127.0.0.1/$p) 2>/dev/null; then
+        _warn "端口 $p 现在没有服务监听，隧道会 502（除非服务稍后启动）"
+    fi
+    echo "$p"
 }
 
 _tunnel_cf_bin() {
@@ -3236,7 +3275,7 @@ _tunnel_stop() {
 
 _tunnel_start() {
     local port bin log metrics host i=0
-    port=$(_tunnel_backend_port)
+    port="${1:-$(_tunnel_backend_port)}"
     bin=$(_tunnel_cf_bin) || { _error "找不到 cloudflared 二进制"; return 1; }
     mkdir -p "$TUNNEL_DIR"
     log="$TUNNEL_DIR/cloudflared.log"
@@ -3281,7 +3320,16 @@ _tunnel_rotate() {
 
 _tunnel_health() {
     _tunnel_load_conf
-    local host age
+    local host age flag
+    # ① 先看 Worker 是否标记了「限速」
+    if [ -n "$TUNNEL_API" ] && [ -n "$TUNNEL_TOKEN" ]; then
+        flag=$(curl -s -m 12 -H "Authorization: Bearer $TUNNEL_TOKEN" "$TUNNEL_API/api/flag" 2>/dev/null)
+        if printf '%s' "$flag" | grep -q '"rotate":true'; then
+            _warn "Worker 标记当前隧道限速：$flag"
+            _tunnel_rotate
+            return
+        fi
+    fi
     host=$(_tunnel_cur_host)
     if ! _tunnel_alive; then
         _warn "隧道进程不在，开始轮换"
@@ -3393,13 +3441,19 @@ _tunnel_auto_enable() {
     clear
     echo -e "${CYAN}  ── 开启自动轮换 ──${NC}"
     echo ""
-    echo "  Worker 地址 [回车用默认 ${TUNNEL_DEF_API}]"
+    if [ -n "$TUNNEL_API" ]; then
+        echo "  Worker 地址 [回车用已保存的 $TUNNEL_API]"
+    else
+        echo "  Worker 地址 [回车用默认 ${TUNNEL_DEF_API}]"
+    fi
     read -r api || exit 0
     [ -z "$api" ] && api="${TUNNEL_API:-$TUNNEL_DEF_API}"
-    if [ "$TUNNEL_DEF_TOKEN" = "__REPORT_TOKEN__" ]; then
-        echo "  REPORT_TOKEN（脚本未内置，必须手动输入）"
+    if [ -n "$TUNNEL_TOKEN" ] && [ "$TUNNEL_TOKEN" != "__REPORT_TOKEN__" ]; then
+        echo "  REPORT_TOKEN [回车用已保存的 $(echo "$TUNNEL_TOKEN" | cut -c1-8)…]"
+    elif [ "$TUNNEL_DEF_TOKEN" != "__REPORT_TOKEN__" ]; then
+        echo "  REPORT_TOKEN [回车用脚本内置的]"
     else
-        echo "  REPORT_TOKEN [回车用默认]"
+        echo "  REPORT_TOKEN（首次需要粘贴，之后会记住）"
     fi
     read -r token || exit 0
     [ -z "$token" ] && token="${TUNNEL_TOKEN:-$TUNNEL_DEF_TOKEN}"
@@ -3429,16 +3483,16 @@ _tunnel_auto_enable() {
     esac
     _success "Worker 连通正常（鉴权通过，KV 未被改动）"
     mkdir -p "$TUNNEL_DIR"
+    port=$(_tunnel_pick_port) || return 1
     cat > "$TUNNEL_CONF" <<CEOF
 API_BASE="$api"
 REPORT_TOKEN="$token"
+BACKEND_PORT="$port"
 MAX_AGE="259200"
 CEOF
     chmod 600 "$TUNNEL_CONF"
     _success "配置已写入 $TUNNEL_CONF"
-    port=$(_tunnel_backend_port)
-    _info "探测到后端端口：$port"
-    if ! _tunnel_start; then
+    if ! _tunnel_start "$port"; then
         _error "隧道启动失败"
         return 1
     fi
