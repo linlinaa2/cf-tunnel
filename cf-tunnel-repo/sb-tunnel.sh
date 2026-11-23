@@ -3188,28 +3188,31 @@ _tunnel_backend_port() {
     echo "8080"
 }
 
+# 全部提示走 stderr，只有端口号走 stdout，避免被 $(...) 吞掉
 _tunnel_pick_port() {
-    local saved=""
+    local saved="" d p
     [ -f "$TUNNEL_CONF" ] && saved=$(. "$TUNNEL_CONF" 2>/dev/null; echo "${BACKEND_PORT:-}")
-    local d=""
-    for d in 8080 3000 8000 2080; do
-        (echo >/dev/tcp/127.0.0.1/$d) 2>/dev/null && break
+
+    echo "" >&2
+    echo "  当前监听的常见后端端口：" >&2
+    local found=0
+    for d in 8080 2080 8081 3000 8000; do
+        if (echo >/dev/tcp/127.0.0.1/"$d") 2>/dev/null; then
+            echo "    $d  (在监听)" >&2
+            found=1
+        fi
     done
-    echo ""
-    echo "  当前监听中的常见后端端口："
-    for d in 8080 2080 8081 3000 8000 43732; do
-        (echo >/dev/tcp/127.0.0.1/$d) 2>/dev/null && echo "    $d  (在监听)"
-    done
-    echo ""
-    echo "  已保存的后端端口：${saved:-（无）}"
-    echo "  后端端口（回车用 ${saved:-8080}）："
-    local p; read -r p || exit 0
+    [ "$found" = "0" ] && echo "    （没检测到，可能都不在跑）" >&2
+    echo "" >&2
+    echo "  已保存的后端端口：${saved:-（无）}" >&2
+    printf "  后端端口（回车用 %s）: " "${saved:-8080}" >&2
+    read -r p || exit 0
     [ -z "$p" ] && p="${saved:-8080}"
     case "$p" in
         ''|*[!0-9]*) _error "端口必须是数字"; return 1 ;;
     esac
-    if ! (echo >/dev/tcp/127.0.0.1/$p) 2>/dev/null; then
-        _warn "端口 $p 现在没有服务监听，隧道会 502（除非服务稍后启动）"
+    if ! (echo >/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
+        _warn "端口 $p 现在没有服务监听，隧道可能 502（除非服务稍后启动）" >&2
     fi
     echo "$p"
 }
