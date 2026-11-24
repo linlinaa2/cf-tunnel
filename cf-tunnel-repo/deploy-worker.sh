@@ -63,7 +63,7 @@ ok "KV namespace = $KV_NS_ID"
 # ---------- 4. 组装 metadata 并上传 ----------
 echo "===== 3. 上传 ====="
 META=$(cat <<EOF
-{"main_module":"worker.js","compatibility_date":"2025-01-01","bindings":[
+{"main_module":"worker.js","compatibility_date":"${COMPAT_DATE:-2026-10-16}","bindings":[
  {"type":"kv_namespace","name":"SUB_KV","namespace_id":"$KV_NS_ID"},
  {"type":"secret_text","name":"REPORT_TOKEN","text":"$REPORT_TOKEN"},
  {"type":"plain_text","name":"TUNNEL_DOMAIN_PATTERN","text":"^[a-z0-9-]+\\\\.trycloudflare\\\\.com$"}
