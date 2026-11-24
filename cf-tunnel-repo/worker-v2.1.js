@@ -404,9 +404,15 @@ function generateRandomKey() {
 }
 
 function hexToBuffer(hex) {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  // 必须正好 64 个十六进制字符（32 字节 AES-256 密钥）。
+  // 以前不校验：错误长度的 key 会被静默截断当成 32 字节用，等于把订阅降级成弱密钥。
+  const s = String(hex === undefined || hex === null ? "" : hex).trim();
+  if (!/^[0-9a-f]{64}$/i.test(s)) {
+    throw new Error("invalid key: need exactly 64 hex characters");
+  }
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 64; i += 2) {
+    bytes[i / 2] = parseInt(s.substr(i, 2), 16);
   }
   return bytes;
 }
@@ -1115,7 +1121,24 @@ export default {
         return jsonResp({ error: "host 格式不合法", pattern }, 400);
       }
 
-      const nodeId = String(body.node || "").trim().replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64) || "default";
+      const nodeId = String(body.node || "").trim()
+        .replace(/[^A-Za-z0-9._-]/g, "")   // 只留安全字符
+        .replace(/\.{2,}/g, ".")           // 折叠 ..（../../etc/passwd 这种别变成 ....etcpasswd）
+        .replace(/^[._-]+/, "")             // 去掉开头的点/下划线/横线
+        .slice(0, 64) || "default";
+      // 入参校验：port 有就必须是合法端口；uuid 有就必须是 UUID 形状。
+      // 以前一律照收，port:null / uuid:"" 的空壳节点会污染节点表、被勾进订阅。
+      let inPort = null;
+      if (body.port !== undefined && body.port !== null && body.port !== "") {
+        inPort = Number(body.port);
+        if (!Number.isInteger(inPort) || inPort < 1 || inPort > 65535) {
+          return jsonResp({ error: "port 必须是 1-65535 的整数", got: body.port }, 400);
+        }
+      }
+      let inUuid = String(body.uuid || "").trim().slice(0, 80);
+      if (inUuid && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(inUuid)) {
+        return jsonResp({ error: "uuid 格式不合法", got: inUuid.slice(0, 16) + "..." }, 400);
+      }
       const prev = await env.SUB_KV.get("tunnel_current", "json");
 
       // ===== 多节点：按 node 名分别存，互不覆盖。这是订阅的唯一数据源 =====
@@ -1124,11 +1147,19 @@ export default {
       const nodes = (rawNodes && typeof rawNodes === "object" && !Array.isArray(rawNodes)) ? rawNodes : {};
       const old = nodes[nodeId] || null;
       const hostChanged = !old || old.host !== newHost;
+      // 缺字段就继承上一次的值（面板手动改域名只带 host+node，不能把 uuid/port 清空）
+      const finPort = (inPort === null) ? ((old && old.port) || null) : inPort;
+      const finUuid = inUuid || ((old && old.uuid) || "");
+      const finPath = String(body.path || "").trim().slice(0, 300) || ((old && old.path) || "");
+      // 首次上报就必须是完整节点，否则拒绝（这就是空壳污染的入口）
+      if (!old && (!finUuid || !finPort)) {
+        return jsonResp({ error: "首次上报必须带 port 和 uuid（完整节点）", node: nodeId }, 400);
+      }
       nodes[nodeId] = {
         host: newHost,
-        port: (body.port === undefined || body.port === null) ? null : Number(body.port),
-        uuid: String(body.uuid || ""),
-        path: String(body.path || ""),
+        port: finPort,
+        uuid: finUuid,
+        path: finPath,
         at: Date.now(),
         iso: new Date().toISOString(),
         prevHost: (old && old.host !== newHost) ? old.host : ((old && old.prevHost) || null),
@@ -1202,7 +1233,8 @@ export default {
         const age = n.at ? Math.max(0, Math.round((now - n.at) / 1000)) : null;
         const stale = !!(liveSec > 0 && age !== null && age > liveSec);
         const expired = !!(staleSec > 0 && age !== null && age > staleSec);
-        if (!stale) live++;
+        const valid = !!(n.host && n.uuid && n.port);   // 完整节点才算有效
+        if (!stale && valid) live++;
         // 匿名接口不吐 uuid/path：这俩拼起来就是可用节点，泄露等于白送流量
         out[k] = {
           host: n.host || null,
@@ -1211,6 +1243,7 @@ export default {
           iso: n.iso || null,
           changes: n.changes || 0,
           hasCred: !!(n.uuid && n.path),
+          valid,
           age, stale, expired
         };
       }
@@ -1367,8 +1400,12 @@ export default {
     // ---------- 订阅输出 ----------
     if (url.pathname.startsWith("/sub/") && request.method === "GET") {
       const id = url.pathname.split("/")[2];
-      const key = url.searchParams.get("key");
+      const key = (url.searchParams.get("key") || "").trim();
       if (!id || !key) return new Response("Missing ID or Key", { status: 400, headers: NO_STORE });
+      // key 必须是 64 位十六进制，否则直接拒绝，不进解密流程（防弱密钥/绕过）
+      if (!/^[0-9a-f]{64}$/i.test(key)) {
+        return new Response("Invalid key format: need 64 hex characters", { status: 400, headers: NO_STORE });
+      }
 
       const encrypted = await env.SUB_KV.get(id);
       if (!encrypted) return new Response("Subscription not found", { status: 404, headers: NO_STORE });
