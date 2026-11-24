@@ -32,7 +32,7 @@ function pushRotate() {
 }
 function pollRotate(id, n) {
   var msg = document.getElementById('rotMsg');
-  if (n > 40) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '✗ 超时：服务器 60 秒没响应，检查 cron'; return; }
+  if (n > 200) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '✗ 超时：5 分钟没等到服务器回报，检查机器上 cron 里的 --tunnel-poll'; return; }
   setTimeout(function () {
     fetch('/api/rotate-state', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
