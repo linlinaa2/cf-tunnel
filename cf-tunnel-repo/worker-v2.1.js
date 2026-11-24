@@ -34,13 +34,13 @@ function pollRotate(id, n) {
   var msg = document.getElementById('rotMsg');
   if (n > 200) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '✗ 超时：5 分钟没等到服务器回报，检查机器上 cron 里的 --tunnel-poll'; return; }
   setTimeout(function () {
-    fetch('/api/rotate-state', { cache: 'no-store' })
+    fetch('/api/rotate-state', { cache: 'no-store', headers: { 'Authorization': 'Bearer ' + getToken() } })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.last && d.last.id === id) {
           msg.className = 'text-xs mt-2 text-teal-300';
           msg.textContent = d.last.ok ? ('✓ 服务器已换好：' + d.last.host) : '✗ 服务器执行失败';
-          if (d.last.ok) setTimeout(function () { location.reload(); }, 1500);
+          if (d.last.ok) setTimeout(refreshAll, 800);
           return;
         }
         pollRotate(id, n + 1);
@@ -52,14 +52,17 @@ function reportHost() {
   var token = getToken();
   var msg = document.getElementById('reportMsg');
   var h = (document.getElementById('hostInput').value || '').trim();
+  var psel = document.getElementById('repNode');
+  var node = psel ? (psel.value || '').trim() : '';
   if (!token) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '需要 REPORT_TOKEN'; return; }
+  if (!node) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '先选是哪台机器，否则会写进一个叫 default 的假节点'; return; }
   if (!/^[a-z0-9][a-z0-9-]*\.trycloudflare\.com$/.test(h)) {
     msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '格式不对，应是 xxx-xxx-xxx.trycloudflare.com'; return;
   }
-  fetch('/api/report', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ host: h }) })
+  fetch('/api/report', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ host: h, node: node }) })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
     .then(function (x) {
-      if (x.ok) { msg.className = 'text-xs mt-2 text-teal-300'; msg.textContent = '✓ 已上报 ' + h; setTimeout(function () { location.reload(); }, 900); }
+      if (x.ok) { msg.className = 'text-xs mt-2 text-teal-300'; msg.textContent = '✓ 已上报 ' + h; loadNodes(); loadTunnel(); }
       else { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '✗ ' + (x.d.error || 'HTTP 错误'); }
     })
     .catch(function (e) { msg.className = 'text-xs mt-2 text-yellow-400'; msg.textContent = '✗ ' + e; });
@@ -72,10 +75,17 @@ function agoText(sec) {
   if (sec < 172800) return Math.round(sec / 3600) + ' 小时前';
   return Math.round(sec / 86400) + ' 天前';
 }
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function refreshAll() { try { loadNodes(); } catch (e) {} try { loadTunnel(); } catch (e) {} }
 function loadNodes() {
   var box = document.getElementById('nodeList');
   var sel = document.getElementById('nodeSelect');
   var rsel = document.getElementById('rotNode');
+  var psel = document.getElementById('repNode');
   if (box) box.textContent = '加载中…';
   fetch('/api/nodes').then(function (r) { return r.json(); }).then(function (d) {
     var nodes = d.nodes || {};
@@ -84,25 +94,29 @@ function loadNodes() {
       if (box) box.innerHTML = '<span class="text-yellow-400">还没有服务器登记。到服务器上跑一次 sb2 --tunnel-report</span>';
       if (sel) sel.innerHTML = '';
       if (rsel) rsel.innerHTML = '<option value="">（还没有机器登记）</option>';
+      if (psel) psel.innerHTML = '<option value="">（还没有机器登记）</option>';
       return;
     }
     var html = '<table style="width:100%;border-collapse:collapse"><tr style="color:#8b949e"><td style="padding:4px 6px">机器</td><td>域名</td><td>端口</td><td>最后上报</td><td>状态</td></tr>';
     ids.forEach(function (id) {
       var n = nodes[id] || {};
       var t = n.at ? new Date(n.at).toLocaleString('zh-CN') : '-';
-      html += '<tr style="border-top:1px solid #30363d"><td style="padding:4px 6px;color:#2dd4bf;font-family:monospace">' + id + '</td>'
-        + '<td style="font-family:monospace;font-size:11px">' + (n.host || '-') + '</td>'
-        + '<td>' + (n.port || '-') + '</td><td style="font-size:11px">' + t + '</td>'
+      html += '<tr style="border-top:1px solid #30363d"><td style="padding:4px 6px;color:#2dd4bf;font-family:monospace">' + esc(id) + '</td>'
+        + '<td style="font-family:monospace;font-size:11px">' + esc(n.host || '-') + '</td>'
+        + '<td>' + esc(n.port === null || n.port === undefined ? '-' : n.port) + '</td><td style="font-size:11px">' + t + '</td>'
         + '<td style="font-size:11px;color:' + (n.stale ? '#f87171' : '#2dd4bf') + '">'
-        + (n.stale ? ('掉线 ' + agoText(n.age)) : ('在线 ' + agoText(n.age))) + '</td></tr>';
+        + (n.stale ? ('掉线 · 最后上报 ' + agoText(n.age)) : ('在线 · ' + agoText(n.age))) + '</td></tr>';
     });
     html += '</table>';
     if (box) box.innerHTML = html;
     if (sel) sel.innerHTML = ids.map(function (id) {
-      return '<option value="' + id + '">' + id + '</option>';
+      return '<option value="' + esc(id) + '">' + esc(id) + '</option>';
     }).join('');
     if (rsel) rsel.innerHTML = '<option value="">全部（谁先取到谁换）</option>' + ids.map(function (id) {
-      return '<option value="' + id + '">' + id + '</option>';
+      return '<option value="' + esc(id) + '">' + esc(id) + '</option>';
+    }).join('');
+    if (psel) psel.innerHTML = '<option value="">选机器…</option>' + ids.map(function (id) {
+      return '<option value="' + esc(id) + '">' + esc(id) + '</option>';
     }).join('');
   }).catch(function (e) {
     if (box) box.innerHTML = '<span class="text-yellow-400">加载失败：' + e + '</span>';
@@ -177,7 +191,7 @@ window.addEventListener('load', function () { loadNodes(); });
             </div>
             <span id="tunnelTime" class="text-xs text-gray-500"></span>
         </div>
-        <p class="text-xs text-gray-500 mt-2">订阅会自动使用此域名，无需重新生成。隧道轮换后客户端更新订阅即可生效。</p>
+        <p class="text-xs text-gray-500 mt-2">多台机器时这里显示最近变更的那台，完整列表见下方「多台服务器管理」。订阅会自动使用各机自己的域名，无需重新生成；隧道轮换后客户端更新订阅即可生效。</p>
     </div>
 
     <div class="glass-panel p-6 mb-6">
@@ -268,7 +282,10 @@ window.addEventListener('load', function () { loadNodes(); });
 
     <div class="tunnel-box p-4 mb-6 text-sm">
         <div class="text-teal-300 font-medium mb-2">📡 手动上报隧道域名</div>
-        <p class="text-xs text-gray-400 mb-2">服务器起不来时，手动把 trycloudflare 域名填进来，订阅立刻跟着变。</p>
+        <p class="text-xs text-gray-400 mb-2">服务器起不来时，先选是哪台机器，再把 trycloudflare 域名填进来，订阅立刻跟着变。</p>
+        <div class="flex gap-2 mb-2">
+            <select id="repNode" class="input-field text-xs" style="max-width:260px;flex:1 1 200px;padding:8px 10px"></select>
+        </div>
         <div class="flex gap-2">
             <input type="text" id="hostInput" class="input-field font-mono text-xs" placeholder="xxxx-xxxx-xxxx.trycloudflare.com">
             <button onclick="reportHost()" class="px-4 py-2 bg-teal-600 rounded-md hover:bg-teal-500 transition text-sm whitespace-nowrap">上报</button>
@@ -283,7 +300,7 @@ window.addEventListener('load', function () { loadNodes(); });
     <div class="text-center text-xs text-gray-500 mt-6 mb-2">worker v2.1 · 稳态上报 1 写 · 换隧道按机器下发 · 死节点自动剔除</div>
 </div>
 <script>
-    (async function loadTunnel() {
+    async function loadTunnel() {
         try {
             const r = await fetch('/api/current', { cache: 'no-store' });
             const d = await r.json();
@@ -302,7 +319,8 @@ window.addEventListener('load', function () { loadNodes(); });
             document.getElementById('tunnelBox').classList.remove('hidden');
             document.getElementById('tunnelHost').textContent = '读取失败（使用节点原始域名）';
         }
-    })();
+    }
+    loadTunnel();
 
     document.getElementById('ipSource').addEventListener('change', function() {
         const box = document.getElementById('customIpBox');
@@ -340,11 +358,12 @@ window.addEventListener('load', function () { loadNodes(); });
         try {
             const response = await fetch('/api/generate', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
                 body: JSON.stringify({ nodeConfig, sourceUrl, portOverride })
             });
             const data = await response.json();
-            if (data.url) {
+            if (response.status === 403) { alert('REPORT_TOKEN 不对或没填（这是写接口，必须带 token）'); }
+            else if (data.url) {
                 document.getElementById('resultBox').classList.remove('hidden');
                 document.getElementById('resultUrl').value = data.url;
             } else { alert('生成失败：' + (data.error || '未知错误')); }
@@ -1023,12 +1042,15 @@ export default {
     // ---------- 首页 ----------
     // ---- 部署脚本：把内嵌的 install.sh 返回，并注入本站 origin 与 REPORT_TOKEN ----
     if (url.pathname === "/install.sh" || url.pathname === "/i.sh" || url.pathname === "/tunnel.js" || url.pathname === "/tunnel") {
+      // token 只发给带 Authorization 的请求，匿名下载留空（否则谁 curl 一下就能拿到写权限）
+      const tok = checkAuth(request, env) ? (env.REPORT_TOKEN || "") : "";
       const bin = atob(INSTALL_SH_B64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       let sh = new TextDecoder().decode(bytes);
       sh = sh.split("__API_BASE__").join(url.origin);
-      sh = sh.split("__REPORT_TOKEN__").join(env.REPORT_TOKEN || "");
+      sh = sh.split("__REPORT_TOKEN__").join(tok);
+      if (!tok) sh = "# [!] 匿名下载：上报 token 已留空（安全原因）。要拿到带 token 的脚本：\n#     curl -H \"Authorization: Bearer <REPORT_TOKEN>\" " + url.origin + "/install.sh -o install.sh\n# 或者在 /etc/sb-tunnel.conf 手动写 REPORT_TOKEN=...\n" + sh;
       return new Response(sh, {
         headers: {
           "content-type": "text/x-shellscript; charset=utf-8",
@@ -1041,9 +1063,11 @@ export default {
 
     // ---- 一键脚本：装节点 + 换隧道 + 上报 ----
     if (ONEKEY_PATHS.has(url.pathname)) {
+      const tok2 = checkAuth(request, env) ? (env.REPORT_TOKEN || "") : "";
       let sh = b64ToText(ONEKEY_B64);
       sh = sh.split("__API_BASE__").join(url.origin);
-      sh = sh.split("__REPORT_TOKEN__").join(env.REPORT_TOKEN || "");
+      sh = sh.split("__REPORT_TOKEN__").join(tok2);
+      if (!tok2) sh = "# [!] 匿名下载：上报 token 已留空。带 token 下载：" + url.origin + "/onekey.sh （加 -H \"Authorization: Bearer <REPORT_TOKEN>\"）\n" + sh;
       return sendShellText(sh, "onekey.sh");
     }
 
@@ -1053,12 +1077,8 @@ export default {
     }
     // ---- 管理面板 ----
     if (url.pathname === "/panel" || url.pathname === "/admin") {
-      const bin = atob(PANEL_HTML_B64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Response(new TextDecoder().decode(bytes), {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }
-      });
+      // 旧面板已退休：它用 node:"manual" 上报，会在节点表里造脏数据；统一跳回首页
+      return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store" } });
     }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -1067,6 +1087,7 @@ export default {
 
     // ---------- 生成订阅 ----------
     if (url.pathname === "/api/generate" && request.method === "POST") {
+      if (!checkAuth(request, env)) return jsonResp({ error: "forbidden" }, 403);
       try {
         const { nodeConfig, sourceUrl, portOverride } = await request.json();
         if (!nodeConfig) return jsonResp({ error: "节点配置不能为空" }, 400);
@@ -1094,7 +1115,7 @@ export default {
         return jsonResp({ error: "host 格式不合法", pattern }, 400);
       }
 
-      const nodeId = String(body.node || "").trim() || "default";
+      const nodeId = String(body.node || "").trim().replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64) || "default";
       const prev = await env.SUB_KV.get("tunnel_current", "json");
 
       // ===== 多节点：按 node 名分别存，互不覆盖。这是订阅的唯一数据源 =====
@@ -1171,20 +1192,34 @@ export default {
       const ids = Object.keys(nodes);
       const now = Date.now();
       const staleSec = parseInt(env.STALE_SECONDS || "604800", 10) || 0;
+      // 在线判定用 LIVE_SECONDS（默认 90 分钟，够 1 小时心跳两次没来就报掉线）；
+      // STALE_SECONDS（7 天）只用于「还值不值得留在订阅里」。
+      const liveSec = parseInt(env.LIVE_SECONDS || "5400", 10) || 0;
       const out = {};
       let live = 0;
       for (const k of ids) {
         const n = nodes[k] || {};
         const age = n.at ? Math.max(0, Math.round((now - n.at) / 1000)) : null;
-        const stale = !!(staleSec > 0 && age !== null && age > staleSec);
+        const stale = !!(liveSec > 0 && age !== null && age > liveSec);
+        const expired = !!(staleSec > 0 && age !== null && age > staleSec);
         if (!stale) live++;
-        out[k] = Object.assign({}, n, { age, stale });
+        // 匿名接口不吐 uuid/path：这俩拼起来就是可用节点，泄露等于白送流量
+        out[k] = {
+          host: n.host || null,
+          port: (n.port === undefined ? null : n.port),
+          at: n.at || null,
+          iso: n.iso || null,
+          changes: n.changes || 0,
+          hasCred: !!(n.uuid && n.path),
+          age, stale, expired
+        };
       }
       return jsonResp({
         count: ids.length,
         live,
         dead: ids.length - live,
         staleSeconds: staleSec,
+        liveSeconds: liveSec,
         nodes: out
       });
     }
@@ -1198,7 +1233,7 @@ export default {
       let ips = body.ips;
       if (typeof ips === "string") ips = ips.split(/[\s,]+/);
       if (!Array.isArray(ips)) return jsonResp({ error: "ips 必须是数组或逗号/换行分隔的字符串" }, 400);
-      ips = ips.map(x => String(x).trim()).filter(Boolean).slice(0, 500);
+      ips = ips.map(x => String(x).trim().slice(0, 253)).filter(Boolean).slice(0, 500);
       if (!ips.length) return jsonResp({ error: "ips 为空" }, 400);
 
       let nodeIds = body.nodes;
@@ -1236,7 +1271,7 @@ export default {
       if (!checkAuth(request, env)) return jsonResp({ error: "forbidden" }, 403);
       let body = {};
       try { body = await request.json(); } catch (e) {}
-      const node = String((body && body.node) || "").trim();
+      const node = String((body && body.node) || "").trim().replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64);
       const id = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
       // 指定机器 → 用独立 key，两台不会抢同一条指令（原来用的全局单键会换错机器）
       const key = node ? ("rotate_request:" + node) : "rotate_request";
@@ -1297,6 +1332,7 @@ export default {
 
     // 网页轮询执行状态（免鉴权，只读）
     if (url.pathname === "/api/rotate-state" && request.method === "GET") {
+      if (!checkAuth(request, env)) return jsonResp({ error: "forbidden" }, 403);
       const pending = await env.SUB_KV.get("rotate_request", "json");
       const last = await env.SUB_KV.get("rotate_done", "json");
       return jsonResp({
