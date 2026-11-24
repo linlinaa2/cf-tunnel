@@ -159,8 +159,8 @@ function copyMultiSub() {
         .tunnel-box { background-color: rgba(45, 212, 191, 0.08); border: 1px solid rgba(45, 212, 191, 0.35); border-radius: 6px; }
     </style>
 </head>
-<body class="min-h-screen flex items-center justify-center p-4">
-<div class="w-full max-w-2xl">
+<body class="min-h-screen p-4">
+<div class="w-full max-w-3xl mx-auto py-8">
     <h1 class="text-3xl font-bold text-center mb-8 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-teal-300">一键订阅生成</h1>
     <div class="notice-box p-4 mb-6 flex gap-3 text-sm">
         <span class="text-xl">🛡️</span>
@@ -185,8 +185,8 @@ function copyMultiSub() {
         <p class="text-xs text-gray-500 mt-2">支持多行输入，每行一个节点。域名部分会被自动替换为当前隧道 Host。</p>
     </div>
 
-    <div class="glass-panel p-6 mb-6 flex gap-4">
-        <div class="w-1/2">
+    <div class="glass-panel p-6 mb-6 flex gap-4 flex-col md:flex-row">
+        <div class="w-full md:w-1/2">
             <label class="block text-sm font-medium mb-2">节点端口覆盖 <span class="text-gray-500 text-xs">(强制修改所有节点端口)</span></label>
             <select id="portOverride" class="input-field">
                 <option value="">跟随原节点 / 优选IP自带端口</option>
@@ -198,7 +198,7 @@ function copyMultiSub() {
                 <option value="2096">2096 (备用优选)</option>
             </select>
         </div>
-        <div class="w-1/2 flex items-end pb-3">
+        <div class="w-full md:w-1/2 flex items-end pb-3">
             <p class="text-xs text-gray-400">如果你发现 443 端口被限速，可以在这里强制切换为 8443 等其他 Cloudflare 支持的端口。</p>
         </div>
     </div>
@@ -226,26 +226,14 @@ function copyMultiSub() {
             <input type="text" id="customUrl" class="input-field" placeholder="填入类似 https://bestcf.pages.dev/domain/mini.txt 的链接">
         </div>
     </div>
-    <div class="tunnel-box p-4 mb-6 text-sm">
-        <div class="flex items-center justify-between gap-3 flex-wrap">
-            <div class="text-teal-300 font-medium">🔄 让服务器换新隧道</div>
-            <div class="flex gap-2 items-center flex-wrap">
-                <select id="rotNode" class="input-field text-xs" style="max-width:240px"><option value="">全部（谁先取到谁换）</option></select>
-                <button onclick="pushRotate()" class="px-4 py-2 bg-teal-600 rounded-md hover:bg-teal-500 transition text-sm whitespace-nowrap">立即换新隧道</button>
-            </div>
-        </div>
-        <p class="text-xs text-gray-400 mt-2">选一台机器再点，只换那台（推荐）。不选则哪台先取到指令就哪台换。服务器换完把新域名写回这里，订阅自动跟随，最多 60 秒生效。</p>
-        <div id="rotMsg" class="text-xs mt-2 text-gray-500"></div>
-    </div>
-
-    <div class="tunnel-box p-4 mb-6 text-sm">
-        <div class="text-teal-300 font-medium mb-2">📡 手动上报隧道域名</div>
-        <p class="text-xs text-gray-400 mb-2">服务器起不来时，手动把 trycloudflare 域名填进来，订阅立刻跟着变。</p>
+    <button id="generateBtn" class="btn-gradient w-full py-4 mb-6 text-lg shadow-lg shadow-blue-500/20">一键加密生成订阅</button>
+    <div id="resultBox" class="glass-panel p-6 mb-6 hidden border-t-2 border-t-blue-500">
+        <label class="block text-sm font-medium mb-2 text-blue-400">✅ 订阅链接已生成！</label>
         <div class="flex gap-2">
-            <input type="text" id="hostInput" class="input-field font-mono text-xs" placeholder="xxxx-xxxx-xxxx.trycloudflare.com">
-            <button onclick="reportHost()" class="px-4 py-2 bg-teal-600 rounded-md hover:bg-teal-500 transition text-sm whitespace-nowrap">上报</button>
+            <input type="text" id="resultUrl" class="input-field font-mono text-sm" readonly>
+            <button id="copyBtn" class="px-4 py-2 bg-gray-700 rounded-md hover:bg-gray-600 transition">复制</button>
         </div>
-        <div id="reportMsg" class="text-xs mt-2 text-gray-500"></div>
+        <p class="text-xs text-orange-400 mt-2">⚠️ 请注意：此链接包含解密密钥，请妥善保管，不要泄露给他人！</p>
     </div>
 
     <div class="tunnel-box p-4 mb-6 text-sm">
@@ -267,19 +255,31 @@ function copyMultiSub() {
         </div>
     </div>
 
-    <button id="generateBtn" class="btn-gradient w-full py-4 text-lg mb-6 shadow-lg shadow-blue-500/20">一键加密生成订阅</button>
-    <div id="resultBox" class="glass-panel p-6 mb-6 hidden border-t-2 border-t-blue-500">
-        <label class="block text-sm font-medium mb-2 text-blue-400">✅ 订阅链接已生成！</label>
-        <div class="flex gap-2">
-            <input type="text" id="resultUrl" class="input-field font-mono text-sm" readonly>
-            <button id="copyBtn" class="px-4 py-2 bg-gray-700 rounded-md hover:bg-gray-600 transition">复制</button>
+    <div class="tunnel-box p-4 mb-6 text-sm">
+        <div class="text-teal-300 font-medium mb-3">🔄 让服务器换新隧道</div>
+        <div class="flex gap-2 items-stretch flex-wrap mb-2">
+            <select id="rotNode" class="input-field text-xs" style="max-width:260px;flex:1 1 200px;padding:8px 10px"><option value="">全部（谁先取到谁换）</option></select>
+            <button onclick="pushRotate()" class="px-4 py-2 bg-teal-600 rounded-md hover:bg-teal-500 transition text-sm whitespace-nowrap">立即换新隧道</button>
         </div>
-        <p class="text-xs text-orange-400 mt-2">⚠️ 请注意：此链接包含解密密钥，请妥善保管，不要泄露给他人！</p>
+        <p class="text-xs text-gray-400">选一台机器再点，只换那台（推荐）。不选则哪台先取到指令就哪台换。换完新域名自动写回，订阅跟着变，一般 1~2 分钟，面板最多等 5 分钟。</p>
+        <div id="rotMsg" class="text-xs mt-2 text-gray-500"></div>
     </div>
+
+    <div class="tunnel-box p-4 mb-6 text-sm">
+        <div class="text-teal-300 font-medium mb-2">📡 手动上报隧道域名</div>
+        <p class="text-xs text-gray-400 mb-2">服务器起不来时，手动把 trycloudflare 域名填进来，订阅立刻跟着变。</p>
+        <div class="flex gap-2">
+            <input type="text" id="hostInput" class="input-field font-mono text-xs" placeholder="xxxx-xxxx-xxxx.trycloudflare.com">
+            <button onclick="reportHost()" class="px-4 py-2 bg-teal-600 rounded-md hover:bg-teal-500 transition text-sm whitespace-nowrap">上报</button>
+        </div>
+        <div id="reportMsg" class="text-xs mt-2 text-gray-500"></div>
+    </div>
+
     <div class="text-sm text-gray-400 space-y-4 bg-[#161b22] p-5 rounded-lg border border-[#30363d]">
         <p>💡 <strong>一次生成，永久有效：</strong>生成此链接后，您只需在客户端内点击“更新订阅”，服务端便会实时为您拉取最新的优选 IP。<span class="text-red-400">无需重新访问此网页生成。</span></p>
         <p>📱 <strong>支持的客户端：</strong>v2rayN (Win), v2rayNG (安卓), Shadowrocket (iOS), NekoBox, Clash Verge 等。</p>
     </div>
+    <div class="text-center text-xs text-gray-500 mt-6 mb-2">worker v2.1 · 稳态上报 1 写 · 换隧道按机器下发 · 死节点自动剔除</div>
 </div>
 <script>
     (async function loadTunnel() {
@@ -357,7 +357,6 @@ function copyMultiSub() {
         this.innerText = '已复制!'; setTimeout(() => { this.innerText = '复制'; }, 2000);
     });
 <\/script>
-    <div class="text-center text-xs text-gray-500 mb-6">worker v2.1 · 稳态上报 1 写 · 换隧道按机器下发 · 死节点自动剔除</div>
 </body>
 </html>`;
 
