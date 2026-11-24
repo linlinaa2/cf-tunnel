@@ -630,13 +630,36 @@ function vlessToClashProxies(text) {
   return out.join('\n');
 }
 
+// 单节点订阅（nodeConfig 里写死一条 vless://）该跟哪台机器的域名？
+// tunnel_current 是旧的「最后上报者」全局键，多机同时在线时它指向哪台完全看谁后报 —— 
+// 把 A 的域名套到 B 的节点上（uuid/path 都是 B 的）配出来的节点是死的。
+// 所以先按 uuid 去 tunnel_nodes 里找同一台机器，找到就用它的 host；找不到才退回旧行为。
+function pickHostForConfig(nodeConfig, nodes) {
+  try {
+    const m = String(nodeConfig || "").match(/vless:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (!m || !nodes || typeof nodes !== "object") return "";
+    const want = m[1].toLowerCase();
+    for (const k of Object.keys(nodes)) {
+      const n = nodes[k] || {};
+      if (String(n.uuid || "").toLowerCase() === want && n.host) return String(n.host);
+    }
+  } catch (e) {}
+  return "";
+}
+
 function applyTunnelHost(nodeConfig, host, pattern) {
   if (!host) return nodeConfig;
+  // TUNNEL_DOMAIN_PATTERN 是给 /api/report 做整串校验用的（带 ^ $ 锚点）。
+  // 但这里是「在 vless:// 长串里做替换」，带锚点的正则在非多行模式下永远匹配不到
+  // 字符串中间 → 旧代码等于什么都没替换，订阅一直吐老域名。所以必须去掉锚点。
+  let pat = String(pattern || '').trim();
+  pat = pat.replace(/^\^/, '').replace(/\$$/, '');
+  if (!pat) pat = '[a-z0-9-]+\\.trycloudflare\\.com';
   try {
-    const re = new RegExp(pattern || '[a-z0-9-]+\\.trycloudflare\\.com', 'g');
+    const re = new RegExp(pat, 'g');
     return nodeConfig.replace(re, host);
   } catch (e) {
-    return nodeConfig;
+    return nodeConfig.replace(/[a-z0-9-]+\\.trycloudflare\\.com/g, host);
   }
 }
 
@@ -1448,9 +1471,19 @@ export default {
         const { nodeConfig, sourceUrl, portOverride } = parsed;
 
         // ===== 核心改动：应用当前隧道域名 =====
-        const cur = await env.SUB_KV.get("tunnel_current", "json");
-        const effectiveConfig = (cur && cur.host)
-          ? applyTunnelHost(nodeConfig, cur.host, env.TUNNEL_DOMAIN_PATTERN)
+        // 优先按 uuid 匹配到具体那台机器（多机时 tunnel_current 是「最后上报者」，会把
+        // A 的域名套到 B 的节点上）；匹配不到才用旧的全局 tunnel_current。
+        let subHost = "";
+        try {
+          const allN = await env.SUB_KV.get("tunnel_nodes", "json");
+          subHost = pickHostForConfig(nodeConfig, allN);
+        } catch (e) {}
+        if (!subHost) {
+          const cur = await env.SUB_KV.get("tunnel_current", "json");
+          if (cur && cur.host) subHost = String(cur.host);
+        }
+        const effectiveConfig = subHost
+          ? applyTunnelHost(nodeConfig, subHost, env.TUNNEL_DOMAIN_PATTERN)
           : nodeConfig;
 
         const ipList = await fetchAndParseIps(sourceUrl);
