@@ -147,6 +147,7 @@ function copyMultiSub() {
     m.className = 'text-xs mt-2 text-teal-300'; m.textContent = '✓ 已复制';
   });
 }
+window.addEventListener('load', function () { loadNodes(); });
 <\/script>
     <style>
         body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
