@@ -58,6 +58,8 @@ fi
 ok "KV namespace = $KV_NS_ID"
 
 # ---------- 3. REPORT_TOKEN ----------
+# 注意：必须显式传 REPORT_TOKEN。脚本里这个默认值是占位符，不传会把线上
+# 汇报 token 改成占位符文本，导致 NAT 机上报全部 403。
 [ -n "${REPORT_TOKEN:-}" ] || REPORT_TOKEN="fd830ca081bbf6fe5606750999b2049f852fa13c69cb5bed47b12d0225f75d11"
 
 # ---------- 4. 组装 metadata 并上传 ----------
@@ -75,7 +77,7 @@ echo "  metadata: $META"
 R=$(curl -s -m 120 -X PUT "$API/accounts/$CF_ACCOUNT_ID/workers/scripts/$NAME" \
   -H "Authorization: Bearer $CF_API_TOKEN" \
   -F "metadata=$META;type=application/json" \
-  -F "worker.js=@$FILE;type=application/javascript+module")
+  -F "worker.js=@$FILE;type=application/javascript+module;filename=worker.js")
 echo "  $R" | head -c 800; echo
 echo "$R" | grep -q '"success":true' || die "上传失败（上面是原始返回：常见 10000 权限不足 / 10021 脚本超限）"
 ok "脚本已上传"
