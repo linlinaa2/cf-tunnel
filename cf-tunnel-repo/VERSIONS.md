@@ -1,11 +1,21 @@
 # 版本清单
 
+## ★ 当前在用（2026-11-24 核对）
+
+| 文件 | 版本 | 用途 | 装到哪 |
+|---|---|---|---|
+| `worker-v2.0.js` | **v2.0 ★** | 首页「🖥 多台服务器管理」；`tunnel_nodes` 按 hostname 分坑、`/api/nodes`、`/api/gen-multi` 单机订阅。**线上 md5 `30b497e2f3ae81bd348c27810a901498` 已核对一致** | Cloudflare Worker `sub-gen` |
+| `sb-tunnel-v2.1.sh` | **v2.1 ★** | 在 v2.0 上加 `_tunnel_heartbeat()`：每 10 分钟自动上报一次（不换隧道也上报），面板不再出现「只显示一台」 | 服务器 `/usr/local/bin/sb2` |
+| `deploy-worker.sh` | — | 用 CF API Token 直接推 worker，不用开控制台。自动查 account / KV、保留 `REPORT_TOKEN`、部署后自检 | 本地执行 |
+
+**两台机器的状态（2026-11-24 10:35 查 KV）**：`tunnel_nodes` 两台都在 —— `u8544-birw96f2`(port 36087) 与 `u8544-0ejmx2w0`(port 48050)。但 10:00 之后 35 分钟无新上报 → 两台 sb2 都还是 pre-v2.1，**心跳未生效**，需要更新一次。
+
 所有交付文件都带版本号。改一次升一版，不要用同名覆盖。
 
 | 文件 | 版本 | 用途 | 装到哪 |
 |---|---|---|---|
 | `sb-tunnel-v1.9.sh` | **v1.9 ★** | **用这个**。修 9 个 bug（详见 README） | 服务器 `/usr/local/bin/sb2` |
-| `worker-v1.3.js` | **v1.3 ★** | **用这个**。修加密爆栈（>200 节点必炸） | Cloudflare Worker |
+| `worker-v1.4.js` | **v1.4 ★** | **用这个**。首页「推送隧道域名」「手动上报」两块；修加密爆栈、修首页 HTML 结构破坏 | Cloudflare Worker |
 | `sb-tunnel-v1.7.sh` | v1.7 | 旧版。上报时带上 uuid/path，供面板「一键生成订阅」用 | 服务器 `/usr/local/bin/sb2` |
 | `worker-v1.3-old.js` | v1.3 初版 | 已被 ★ 版取代。`/api/gen-sub` 一键生成本机节点订阅；面板加「生成本机 argo 节点订阅」卡片 | Cloudflare Worker |
 | `sb-tunnel-v1.6.sh` | v1.6 | 旧版。新增 `--tunnel-poll`：每分钟轮询 Worker，网页点按钮即可让服务器换隧道 | 服务器 `/usr/local/bin/sb2` |
